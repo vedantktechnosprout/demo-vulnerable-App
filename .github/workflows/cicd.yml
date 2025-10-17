@@ -1,0 +1,212 @@
+name: Secure CI/CD Pipeline with Prisma Cloud Checkov
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  DOCKER_IMAGE: vulnerable-app
+  DOCKER_TAG: ${{ github.sha }}
+  DOCKER_REGISTRY: docker.io  # Change to your registry (docker.io, public.ecr.aws, etc.)
+
+jobs:
+  # Job 1: Scan source code, Dockerfile, and dependencies
+  security-scan:
+    runs-on: ubuntu-latest
+    outputs:
+      scan-passed: ${{ steps.checkov.outputs.scan-passed }}
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v2
+
+      - name: Run Prisma Cloud Checkov - Code & IaC
+        id: checkov
+        uses: bridgecrewio/checkov-action@master
+        env:
+          PRISMA_API_URL: https://api.ind.prismacloud.io
+        with:
+          directory: .
+          framework: all  # docker, python, secrets, etc.
+          output_format: sarif
+          output_file_path: checkov-code-results.sarif
+          api-key: ${{ secrets.BC_API_KEY }}
+          #soft_fail: false  # FAILS job on vulnerabilities
+
+      - name: Upload Code Scan Results to GitHub Security Tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: checkov-code-results.sarif
+
+      - name: Set scan status output
+        id: scan-status
+        run: |
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "scan-passed=true" >> $GITHUB_OUTPUT
+          else
+            echo "scan-passed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Security Scan Summary
+        if: always()
+        run: |
+          echo "🔍 Security Scan Results:"
+          echo "Job Status: ${{ job.status }}"
+          echo "Scan Passed: ${{ steps.scan-status.outputs.scan-passed }}"
+          if [ "${{ job.status }}" != "success" ]; then
+            echo "🚫 CODE SCAN FAILED! Common issues:"
+            echo "  - CKV_DOCKER_2: Running as root user"
+            echo "  - CKV_SECRET_1: Vulnerable dependencies (Flask CVE)"
+            echo "  - Missing HEALTHCHECK, USER directives"
+            echo "Fix before proceeding to build."
+          else
+            echo "✅ Code scan passed - proceeding to Docker build"
+          fi
+
+  # Job 2: Build and scan Docker image (depends on security-scan success)
+  docker-build-scan:
+    runs-on: ubuntu-latest
+    needs: security-scan
+    if: needs.security-scan.outputs.scan-passed == 'true'
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Build Docker Image
+        id: build
+        run: |
+          docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} .
+          docker tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_IMAGE}:latest
+          echo "image_id=$(docker inspect ${DOCKER_IMAGE}:${DOCKER_TAG} --format='{{.ID}}')" >> $GITHUB_OUTPUT
+          echo "Image built successfully: ${DOCKER_IMAGE}:${DOCKER_TAG}"
+
+      - name: Run Prisma Cloud Checkov - Docker Image Scan
+        id: image-checkov
+        uses: bridgecrewio/checkov-action@master
+        env:
+          PRISMA_API_URL: https://api.ind.prismacloud.io
+        with:
+          image_name: ${DOCKER_IMAGE}:${DOCKER_TAG}
+          dockerfile_path: ./Dockerfile
+          output_format: sarif
+          output_file_path: checkov-image-results.sarif
+          api-key: ${{ secrets.BC_API_KEY }}
+          #soft_fail: false  # FAILS on image vulnerabilities
+
+      - name: Upload Image Scan Results
+        if: always()
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: checkov-image-results.sarif
+
+      - name: Docker Image Scan Summary
+        if: always()
+        run: |
+          echo "🐳 Docker Image Scan Results:"
+          echo "Image: ${DOCKER_IMAGE}:${DOCKER_TAG}"
+          if [ "${{ job.status }}" != "success" ]; then
+            echo "🚫 IMAGE SCAN FAILED! Common issues:"
+            echo "  - Base image CVEs (python:3.8-slim)"
+            echo "  - OS package vulnerabilities"
+            echo "  - Layer misconfigurations"
+            echo "Fix Dockerfile/base image before pushing to registry."
+          else
+            echo "✅ Image scan passed - ready for registry push"
+          fi
+
+  # Job 3: Push to DockerHub/ECR (depends on image scan success)
+  push-to-registry:
+    runs-on: ubuntu-latest
+    needs: [security-scan, docker-build-scan]
+    if: needs.security-scan.outputs.scan-passed == 'true' && needs.docker-build-scan.result == 'success'
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # For ECR, replace above with:
+      # - name: Configure AWS credentials
+      #   uses: aws-actions/configure-aws-credentials@v2
+      #   with:
+      #     aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      #     aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      #     aws-region: us-west-2
+      # - name: Login to Amazon ECR
+      #   id: login-ecr
+      #   uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Build and Push Docker Image
+        run: |
+          docker build -t ${DOCKER_REGISTRY}/${DOCKER_IMAGE}:${DOCKER_TAG} .
+          docker push ${DOCKER_REGISTRY}/${DOCKER_IMAGE}:${DOCKER_TAG}
+          docker tag ${DOCKER_REGISTRY}/${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_REGISTRY}/${DOCKER_IMAGE}:latest
+          docker push ${DOCKER_REGISTRY}/${DOCKER_IMAGE}:latest
+          echo "✅ Image pushed to ${DOCKER_REGISTRY}: ${DOCKER_IMAGE}:${DOCKER_TAG}"
+
+      - name: Save image digest
+        id: digest
+        run: |
+          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' ${DOCKER_REGISTRY}/${DOCKER_IMAGE}:${DOCKER_TAG})
+          echo "digest=${DIGEST}" >> $GITHUB_OUTPUT
+
+  # Job 4: Deploy to Production (final gate)
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [security-scan, docker-build-scan, push-to-registry]
+    if: github.ref == 'refs/heads/main' && needs.security-scan.outputs.scan-passed == 'true' && needs.push-to-registry.result == 'success'
+    environment: production  # Requires approval for prod deploys
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v2
+
+      - name: Deploy to Kubernetes
+        run: |
+          echo "🚀 DEPLOYING TO PRODUCTION"
+          echo "Image: ${DOCKER_REGISTRY}/${DOCKER_IMAGE}:${{ github.sha }}"
+          
+          # Update deployment manifest with new image
+          sed -i "s|image:.*|image: ${DOCKER_REGISTRY}/${DOCKER_IMAGE}:${{ github.sha }}|" k8s/deployment.yaml
+          
+          # Apply to cluster
+          kubectl apply -f k8s/
+          kubectl rollout status deployment/${DOCKER_IMAGE} --timeout=300s
+          
+          echo "✅ Deployment successful!"
+          echo "New image digest: ${{ needs.push-to-registry.outputs.digest }}"
+        env:
+          KUBECONFIG: ${{ secrets.KUBECONFIG }}  # Or use aws-eks-auth for EKS
+
+      # Alternative: Deploy to ECS, App Runner, etc.
+      # - name: Deploy to ECS
+      #   run: |
+      #     aws ecs update-service --cluster my-cluster --service my-service --force-new-deployment
+
+  # Job 5: Notify on failures (runs regardless of other job success)
+  notify:
+    runs-on: ubuntu-latest
+    if: failure()
+    needs: [security-scan, docker-build-scan, push-to-registry, deploy]
+    steps:
+      - name: Security Pipeline Failure Notification
+        run: |
+          echo "🚨 PIPELINE FAILED - DEPLOYMENT BLOCKED"
+          echo "Stage Failed: ${{ needs.*.result }}"
+          echo "Checkov detected vulnerabilities in:"
+          echo "  • Source code/Dockerfile: ${{ needs.security-scan.result }}"
+          echo "  • Container image: ${{ needs.docker-build-scan.result }}"
+          echo "Fix required before production deployment."
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
