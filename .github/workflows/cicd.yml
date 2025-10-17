@@ -34,21 +34,6 @@ jobs:
           api-key: ${{ secrets.BC_API_KEY }}
           #soft_fail: false  # FAILS job on vulnerabilities
 
-      - name: Upload Code Scan Results to GitHub Security Tab
-        if: always()
-        uses: github/codeql-action/upload-sarif@v2
-        with:
-          sarif_file: checkov-code-results.sarif
-
-      - name: Set scan status output
-        id: scan-status
-        run: |
-          if [ "${{ job.status }}" == "success" ]; then
-            echo "scan-passed=true" >> $GITHUB_OUTPUT
-          else
-            echo "scan-passed=false" >> $GITHUB_OUTPUT
-          fi
-
       - name: Security Scan Summary
         if: always()
         run: |
