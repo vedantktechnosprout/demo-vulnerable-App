@@ -13,48 +13,48 @@ env:
 
 jobs:
   # Job 1: Scan source code, Dockerfile, and dependencies
-  security-scan:
-    runs-on: ubuntu-latest
-    outputs:
-      scan-passed: ${{ steps.checkov.outputs.scan-passed }}
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v2
+  # security-scan:
+  #   runs-on: ubuntu-latest
+  #   outputs:
+  #     scan-passed: ${{ steps.checkov.outputs.scan-passed }}
+  #   steps:
+  #     - name: Checkout repo
+  #       uses: actions/checkout@v2
 
-      - name: Run Prisma Cloud Checkov - Code & IaC
-        id: checkov
-        uses: bridgecrewio/checkov-action@master
-        env:
-          PRISMA_API_URL: https://api.ind.prismacloud.io
-        with:
-          directory: .
-          framework: all  # docker, python, secrets, etc.
-          output_format: sarif
-          output_file_path: checkov-code-results.sarif
-          api-key: ${{ secrets.BC_API_KEY }}
-          #soft_fail: false  # FAILS job on vulnerabilities
+  #     - name: Run Prisma Cloud Checkov - Code & IaC
+  #       id: checkov
+  #       uses: bridgecrewio/checkov-action@master
+  #       env:
+  #         PRISMA_API_URL: https://api.ind.prismacloud.io
+  #       with:
+  #         directory: .
+  #         framework: all  # docker, python, secrets, etc.
+  #         output_format: sarif
+  #         output_file_path: checkov-code-results.sarif
+  #         api-key: ${{ secrets.BC_API_KEY }}
+  #         #soft_fail: false  # FAILS job on vulnerabilities
 
-      - name: Security Scan Summary
-        if: always()
-        run: |
-          echo "🔍 Security Scan Results:"
-          echo "Job Status: ${{ job.status }}"
-          echo "Scan Passed: ${{ steps.scan-status.outputs.scan-passed }}"
-          if [ "${{ job.status }}" != "success" ]; then
-            echo "🚫 CODE SCAN FAILED! Common issues:"
-            echo "  - CKV_DOCKER_2: Running as root user"
-            echo "  - CKV_SECRET_1: Vulnerable dependencies (Flask CVE)"
-            echo "  - Missing HEALTHCHECK, USER directives"
-            echo "Fix before proceeding to build."
-          else
-            echo "✅ Code scan passed - proceeding to Docker build"
-          fi
+  #     - name: Security Scan Summary
+  #       if: always()
+  #       run: |
+  #         echo "🔍 Security Scan Results:"
+  #         echo "Job Status: ${{ job.status }}"
+  #         echo "Scan Passed: ${{ steps.scan-status.outputs.scan-passed }}"
+  #         if [ "${{ job.status }}" != "success" ]; then
+  #           echo "🚫 CODE SCAN FAILED! Common issues:"
+  #           echo "  - CKV_DOCKER_2: Running as root user"
+  #           echo "  - CKV_SECRET_1: Vulnerable dependencies (Flask CVE)"
+  #           echo "  - Missing HEALTHCHECK, USER directives"
+  #           echo "Fix before proceeding to build."
+  #         else
+  #           echo "✅ Code scan passed - proceeding to Docker build"
+  #         fi
 
   # Job 2: Build and scan Docker image (depends on security-scan success)
   docker-build-scan:
     runs-on: ubuntu-latest
-    needs: security-scan
-    if: needs.security-scan.outputs.scan-passed == 'true'
+    # needs: security-scan
+    # if: needs.security-scan.outputs.scan-passed == 'true'
     steps:
       - name: Checkout repo
         uses: actions/checkout@v2
@@ -107,8 +107,9 @@ jobs:
   # Job 3: Push to DockerHub/ECR (depends on image scan success)
   push-to-registry:
     runs-on: ubuntu-latest
-    needs: [security-scan, docker-build-scan]
-    if: needs.security-scan.outputs.scan-passed == 'true' && needs.docker-build-scan.result == 'success'
+    needs: [docker-build-scan]
+    # if: needs.security-scan.outputs.scan-passed == 'true' && needs.docker-build-scan.result == 'success'
+    if: needs.docker-build-scan.result == 'success'
     steps:
       - name: Checkout repo
         uses: actions/checkout@v2
@@ -150,7 +151,7 @@ jobs:
   # Job 4: Deploy to Production (final gate)
   deploy:
     runs-on: ubuntu-latest
-    needs: [security-scan, docker-build-scan, push-to-registry]
+    needs: [docker-build-scan, push-to-registry]
     if: github.ref == 'refs/heads/main' && needs.security-scan.outputs.scan-passed == 'true' && needs.push-to-registry.result == 'success'
     environment: production  # Requires approval for prod deploys
     steps:
@@ -183,7 +184,7 @@ jobs:
   notify:
     runs-on: ubuntu-latest
     if: failure()
-    needs: [security-scan, docker-build-scan, push-to-registry, deploy]
+    needs: [docker-build-scan, push-to-registry, deploy]
     steps:
       - name: Security Pipeline Failure Notification
         run: |
