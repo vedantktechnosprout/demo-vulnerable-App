@@ -1,0 +1,11 @@
+version: '3.8'
+services:
+  app:
+    build: .
+    ports:
+      - "5000:5000"
+    volumes:
+      - .:/app  # Mount for live code changes
+      - ./users.db:/app/users.db  # Persist DB
+    environment:
+      - FLASK_ENV=development

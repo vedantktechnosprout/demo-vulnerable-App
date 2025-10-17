@@ -1,0 +1,2 @@
+markupsafe==2.0.1
+Flask==1.1.4  # Vulnerable to remote code execution (CVE-2021-23340)
