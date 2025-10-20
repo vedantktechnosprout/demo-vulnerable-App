@@ -101,7 +101,7 @@ jobs:
             echo "  - Layer misconfigurations"
             echo "Fix Dockerfile/base image before pushing to registry."
           else
-            echo "✅ Image scan passed - ready for registry push in prod"
+            echo "✅ Image scan passed - ready for registry push"
           fi
 
   # Job 3: Push to DockerHub/ECR (depends on image scan success)
