@@ -81,6 +81,7 @@ jobs:
           output_format: sarif
           output_file_path: checkov-image-results.sarif
           api-key: ${{ secrets.BC_API_KEY }}
+          use_enforcement_rules: true
           #soft_fail: false  # FAILS on image vulnerabilities
 
       - name: Upload Image Scan Results
