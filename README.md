@@ -1,10 +1,3 @@
-Perfect 👍
-Here’s a **clean, copy-paste ready `README.md`** (no extra commentary, no placeholders you have to think about).
-Just paste this directly into your repo.
-
----
-
-````md
 # 🔐 Secure CI/CD Pipeline with Prisma Cloud & Checkov
 
 This repository demonstrates how to **secure and block a CI/CD pipeline using Prisma Cloud (Checkov)** by scanning source code, Dockerfiles, IaC, and container images.  
@@ -175,16 +168,5 @@ A failed scan causes:
 ## 🏁 Conclusion
 
 This project demonstrates how **Prisma Cloud and Checkov enforce security as code**, ensuring that insecure applications **never reach production** through CI/CD pipelines.
-
-```
-
----
-
-If you want, I can also:
-- Make this **Prisma-Cloud-official wording**
-- Add a **“How to fix the vulnerabilities”** section
-- Create a **short demo README for interviews**
-- Add **architecture diagrams**
-
-Just say the word 🚀
+ the word 🚀
 ```
