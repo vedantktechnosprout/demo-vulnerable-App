@@ -169,4 +169,3 @@ A failed scan causes:
 
 This project demonstrates how **Prisma Cloud and Checkov enforce security as code**, ensuring that insecure applications **never reach production** through CI/CD pipelines.
  the word 🚀
-```
